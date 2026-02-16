@@ -27,19 +27,19 @@ jobs:
 
     - name: Prepare secrets file
       run: |
-        mkdir -p jmeter/test-data
+        mkdir -p jmeter-tests/test-data
         echo "${{ secrets.SECRETS_CSV_CONTENT }}" | sed 's/\\n/\n/g' > jmeter/test-data/secrets.csv
 
     - name: Run JMeter Test
       run: |
         ${{ env.JMETER_HOME }}/bin/jmeter -n \
           -Djava.awt.headless=true \
-          -t jmeter/LERS_Auth_Test_CI.jmx \
-          -l jmeter/result.jtl \
-          -e -o jmeter/report
+          -t jmeter-tests/LERS_Auth_Test_CI.jmx \
+          -l jmeter-tests/result.jtl \
+          -e -o jmeter-tests/report
 
     - name: Upload HTML Report
       uses: actions/upload-artifact@v4
       with:
         name: jmeter-report
-        path: jmeter/report/
+        path: jmeter-tests/report/
