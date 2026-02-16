@@ -28,7 +28,7 @@ jobs:
     - name: Prepare secrets file
       run: |
         mkdir -p jmeter-tests/test-data
-        echo "${{ secrets.SECRETS_CSV_CONTENT }}" | sed 's/\\n/\n/g' > jmeter/test-data/secrets.csv
+        echo "${{ secrets.SECRETS_CSV_CONTENT }}" | sed 's/\\n/\n/g' > jmeter-tests/test-data/secrets.csv
 
     - name: Run JMeter Test
       run: |
