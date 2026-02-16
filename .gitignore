@@ -1,0 +1,13 @@
+# JMeter результаты и отчеты
+jmeter-tests/report/
+jmeter-tests/*.jtl
+
+# Secrets - не для github
+jmeter-tests/test-data/secrets.csv
+
+# OS files
+.DS_Store
+Thumbs.db
+
+jmeter-tests/LERS_Auth_Test.jmx
+run-test.sh
