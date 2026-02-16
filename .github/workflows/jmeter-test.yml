@@ -34,7 +34,7 @@ jobs:
       run: |
         ${{ env.JMETER_HOME }}/bin/jmeter -n \
           -Djava.awt.headless=true \
-          -t jmeter/LERS_Auth_Test.jmx \
+          -t jmeter/LERS_Auth_Test_CI.jmx \
           -l jmeter/result.jtl \
           -e -o jmeter/report
 
