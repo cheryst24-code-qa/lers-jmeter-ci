@@ -10,4 +10,3 @@ jmeter-tests/test-data/secrets.csv
 Thumbs.db
 
 jmeter-tests/LERS_Auth_Test.jmx
-run-test.sh

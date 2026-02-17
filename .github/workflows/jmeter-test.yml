@@ -1,17 +1,12 @@
 name: JMeter Load Test
 
-on:
-  push:
-    branches: [ "main" ]
-  workflow_dispatch:
+on: [push, workflow_dispatch]
 
 jobs:
   test:
     runs-on: ubuntu-latest
-
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+    - uses: actions/checkout@v4
 
     - name: Set up JDK 11
       uses: actions/setup-java@v4
@@ -23,22 +18,22 @@ jobs:
       run: |
         wget https://archive.apache.org/dist/jmeter/binaries/apache-jmeter-5.6.3.tgz
         tar -xzf apache-jmeter-5.6.3.tgz
-        echo "JMETER_HOME=$PWD/apache-jmeter-5.6.3" >> $GITHUB_ENV
 
-    - name: Prepare secrets file
+    - name: Prepare secrets
       run: |
         mkdir -p jmeter-tests/test-data
         echo "${{ secrets.SECRETS_CSV_CONTENT }}" | sed 's/\\n/\n/g' > jmeter-tests/test-data/secrets.csv
 
-    - name: Run JMeter Test
+    - name: Run JMeter
+      working-directory: jmeter-tests
       run: |
-        ${{ env.JMETER_HOME }}/bin/jmeter -n \
+        ../apache-jmeter-5.6.3/bin/jmeter -n \
           -Djava.awt.headless=true \
-          -t jmeter-tests/LERS_Auth_Test_CI.jmx \
-          -l jmeter-tests/result.jtl \
-          -e -o jmeter-tests/report
+          -t LERS_Auth_Test_CI.jmx \
+          -l result.jtl \
+          -e -o report
 
-    - name: Upload HTML Report
+    - name: Upload Report
       uses: actions/upload-artifact@v4
       with:
         name: jmeter-report
