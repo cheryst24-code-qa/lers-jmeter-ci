@@ -111,7 +111,7 @@
                 <boolProp name="HTTPArgument.always_encode">false</boolProp>
                 <stringProp name="Argument.value">{&#xd;
   &quot;login&quot;: &quot;${login}&quot;,&#xd;
-  &quot;password&quot;: &quot;${password}&quot;&#xd;
+  &quot;password&quot;: &quot;"${__escapeHtml(${password})}"&quot;&#xd;
 }</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
