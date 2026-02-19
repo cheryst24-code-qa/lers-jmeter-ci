@@ -34,7 +34,7 @@
           <collectionProp name="Arguments.arguments">
             <elementProp name="base_url" elementType="Argument">
               <stringProp name="Argument.name">base_url</stringProp>
-              <stringProp name="Argument.value">45.141.100.211</stringProp>
+              <stringProp name="Argument.value">placeholder_base_url</stringProp>
               <stringProp name="Argument.metadata">=</stringProp>
             </elementProp>
             <elementProp name="login" elementType="Argument">
