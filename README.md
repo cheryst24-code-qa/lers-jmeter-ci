@@ -5,16 +5,16 @@
 
 ## Структура проекта
 
-lers-jmeter-ci/
-├── jmeter-tests/               # Тестовые сценарии JMeter
-│   ├── LERS_Auth_Test_CI.jmx   # Основной тест: авторизация + запросы данных
-│   └── test-data/
-│       ├── secrets.csv.example  # Шаблон файла с учётными данными
-│       └── secrets.csv         # ← ДОБАВЛЕН В .gitignore (не коммитится!)
-├── .github/workflows/
-│   └── jmeter-test.yml         # Workflow для GitHub Actions
-├── .gitignore                  # Игнорирование секретов и временных файлов
-└── README.md                  
+    lers-jmeter-ci/
+    ├── jmeter-tests/               # Тестовые сценарии JMeter
+    │   ├── LERS_Auth_Test_CI.jmx   # Основной тест: авторизация + запросы данных
+    │   └── test-data/
+    │       ├── secrets.csv.example  # Шаблон файла с учётными данными
+    │       └── secrets.csv         # ← ДОБАВЛЕН В .gitignore (не коммитится!)
+    ├── .github/workflows/
+    │   └── jmeter-test.yml         # Workflow для GitHub Actions
+    ├── .gitignore                  # Игнорирование секретов и временных файлов
+    └── README.md                  
 
 ## Требования
 
@@ -65,7 +65,8 @@ $JMETER_HOME/bin/jmeter -n \
 ## CI/CD через GitHub Actions
 
 Тесты автоматически запускаются при пуше в ветку main или вручную через workflow_dispatch.
-Настройка секретов
+
+Настройка секретов:
 Перейдите в Settings -> Secrets and variables -> Actions.
 Создайте секрет SECRETS_CSV_CONTENT со значением в формате(пример):
 login,password\ninspector,test123
@@ -79,13 +80,14 @@ HTML-отчёт сохраняется как артефакт jmeter-report.
 ## Безопасность
 
 Никакие секреты не хранятся в репозитории:
-Реальные логины/пароли — только в локальном secrets.csv (игнорируется через .gitignore).
+Реальные логины/пароли - только в локальном secrets.csv (игнорируется через .gitignore).
 В .jmx используются placeholder'ы или переменные.
 Для CI/CD данные передаются через GitHub Secrets.
 
 ## Что тестируется
 
 | Эндпоинт | Метод | Проверка |
+|----------|-------|----------|
 | `/api/v1/Login` | POST | Успешная авторизация, получение JWT-токена |
 | `/api/v1/Login/Current`| GET | Доступ к данным текущего пользователя |
 | `/api/v1/Core/Nodes` | GET | Получение списка точек учёта |
