@@ -24,14 +24,15 @@ jobs:
         mkdir -p jmeter-tests/test-data
         echo "${{ secrets.SECRETS_CSV_CONTENT }}" | sed 's/\\n/\n/g' > jmeter-tests/test-data/secrets.csv
 
-    - name: Run JMeter
+    - name: Run JMeter Test
       working-directory: jmeter-tests
       run: |
-        ../apache-jmeter-5.6.3/bin/jmeter -n \
+        ${{ env.JMETER_HOME }}/bin/jmeter -n \
           -Djava.awt.headless=true \
+          -Jbase_url=${{ secrets.BASE_URL }} \
           -t LERS_Auth_Test_CI.jmx \
           -l result.jtl \
-          -e -o report
+          -e -o report          
 
     - name: Upload Report
       uses: actions/upload-artifact@v4
