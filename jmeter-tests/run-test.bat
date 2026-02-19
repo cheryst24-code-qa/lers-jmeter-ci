@@ -2,7 +2,7 @@
 setlocal
 
 REM === Настройки ===
-set JMETER_HOME=D:\apache-jmeter-5.6.3
+set JMETER_HOME=D:\JMeter\apache-jmeter-5.6.3
 set TEST_DIR=%~dp0
 
 REM === Очистка старых результатов ===
