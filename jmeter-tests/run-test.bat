@@ -9,7 +9,7 @@ if exist "%TEST_DIR%report" rd /s /q "%TEST_DIR%report"
 
 "%JMETER_HOME%\bin\jmeter.bat" -n ^
   -Djava.awt.headless=true ^
-  -Jbase_url=45.111.222.333 ^
+  -Jbase_url=45.141.100.211 ^
   -t "%TEST_DIR%LERS_Auth_Test_CI.jmx" ^
   -l "%TEST_DIR%result.jtl" ^
   -e -o "%TEST_DIR%report"
