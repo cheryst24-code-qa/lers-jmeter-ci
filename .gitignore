@@ -2,6 +2,8 @@
 jmeter-tests/report/
 jmeter-tests/*.jtl
 
+jmeter-tests/jmeter.log
+
 # Secrets - не для github
 jmeter-tests/test-data/secrets.csv
 

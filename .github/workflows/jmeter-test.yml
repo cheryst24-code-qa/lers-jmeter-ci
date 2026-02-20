@@ -22,13 +22,37 @@ jobs:
     - name: Prepare secrets
       run: |
         mkdir -p jmeter-tests/test-data
-        echo "${{ secrets.SECRETS_CSV_CONTENT }}" | sed 's/\\n/\n/g' > jmeter-tests/test-data/secrets.csv
+        # Записываем секрет в файл. 
+        # ВАЖНО: В GitHub Secret 'SECRETS_CSV_CONTENT' должны быть реальные переносы строк (Enter), а не символы \n
+        echo "${{ secrets.SECRETS_CSV_CONTENT }}" > jmeter-tests/test-data/secrets.csv
+        
+        echo "=== ДИАГНОСТИКА CSV ==="
+        echo "Содержимое файла (cat):"
+        cat jmeter-tests/test-data/secrets.csv
+        echo ""
+        echo "Побайтовый просмотр (показывает скрытые символы):"
+        cat -A jmeter-tests/test-data/secrets.csv
+        echo "========================="
+        
+        # Проверка количества строк
+        LINES=$(wc -l < jmeter-tests/test-data/secrets.csv)
+        echo "Количество строк в файле: $LINES"
+        if [ "$LINES" -lt 1 ]; then
+          echo "❌ ОШИБКА: Файл пуст или не содержит переносов строк!"
+          exit 1
+        fi
 
     - name: Run JMeter Test
       working-directory: jmeter-tests
       run: |
-        # Устанавливаем переменную окружения JMETER_HOME, если она еще не задана выше
         export JMETER_HOME=${{ github.workspace }}/apache-jmeter-5.6.3
+        
+        echo "Запуск теста..."
+        echo "BASE_URL: ${{ secrets.BASE_URL }}"
+        echo "PORT: ${{ secrets.BASE_PORT }}"
+        
+        # Добавляем логирование переменных перед тестом через простой скрипт JMeter (опционально)
+        # Но сначала попробуем просто запустить с флагом -J
         
         $JMETER_HOME/bin/jmeter -n \
           -Djava.awt.headless=true \
@@ -36,10 +60,14 @@ jobs:
           -Jport=${{ secrets.BASE_PORT }} \
           -t LERS_Auth_Test_CI.jmx \
           -l result.jtl \
-          -e -o report
-          
-    - name: Upload Report
+          -e -o report \
+          -L DEBUG  # Включаем подробное логирование JMeter
+
+    - name: Upload Report & Logs
+      if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: jmeter-report
-        path: jmeter-tests/report/
+        name: jmeter-debug-report
+        path: |
+          jmeter-tests/report/
+          jmeter-tests/result.jtl
