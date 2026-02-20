@@ -27,13 +27,17 @@ jobs:
     - name: Run JMeter Test
       working-directory: jmeter-tests
       run: |
-        ${{ env.JMETER_HOME }}/bin/jmeter -n \
+        # Устанавливаем переменную окружения JMETER_HOME, если она еще не задана выше
+        export JMETER_HOME=${{ github.workspace }}/apache-jmeter-5.6.3
+        
+        $JMETER_HOME/bin/jmeter -n \
           -Djava.awt.headless=true \
           -Jbase_url=${{ secrets.BASE_URL }} \
+          -Jport=${{ secrets.BASE_PORT }} \
           -t LERS_Auth_Test_CI.jmx \
           -l result.jtl \
-          -e -o report          
-
+          -e -o report
+          
     - name: Upload Report
       uses: actions/upload-artifact@v4
       with:
