@@ -19,41 +19,35 @@ jobs:
         wget https://archive.apache.org/dist/jmeter/binaries/apache-jmeter-5.6.3.tgz
         tar -xzf apache-jmeter-5.6.3.tgz
 
-    - name: Prepare secrets
+    - name: Prepare secrets & Debug CSV
       run: |
         mkdir -p jmeter-tests/test-data
-        # Записываем секрет в файл. 
-        # ВАЖНО: В GitHub Secret 'SECRETS_CSV_CONTENT' должны быть реальные переносы строк (Enter), а не символы \n
+        
+        # Записываем секрет в файл
+        # Важно: В секрете SECRETS_CSV_CONTENT должно быть: login,password (через запятую)
         echo "${{ secrets.SECRETS_CSV_CONTENT }}" > jmeter-tests/test-data/secrets.csv
         
-        echo "=== ДИАГНОСТИКА CSV ==="
-        echo "Содержимое файла (cat):"
+        echo "=== ДИАГНОСТИКА CSV ФАЙЛА ==="
+        echo "1. Обычный вывод:"
         cat jmeter-tests/test-data/secrets.csv
         echo ""
-        echo "Побайтовый просмотр (показывает скрытые символы):"
+        echo "2. Побайтовый вывод (ищем лишние пробелы/символы):"
+        # cat -A покажет $ в конце строки и любые скрытые символы
         cat -A jmeter-tests/test-data/secrets.csv
-        echo "========================="
+        echo "=============================="
         
-        # Проверка количества строк
-        LINES=$(wc -l < jmeter-tests/test-data/secrets.csv)
-        echo "Количество строк в файле: $LINES"
-        if [ "$LINES" -lt 1 ]; then
-          echo "❌ ОШИБКА: Файл пуст или не содержит переносов строк!"
-          exit 1
-        fi
+        # Проверка длины строки
+        echo "Длина строки (символов): $(wc -c < jmeter-tests/test-data/secrets.csv)"
 
-    - name: Run JMeter Test
+    - name: Run JMeter Test with Debug
       working-directory: jmeter-tests
       run: |
         export JMETER_HOME=${{ github.workspace }}/apache-jmeter-5.6.3
         
         echo "Запуск теста..."
-        echo "BASE_URL: ${{ secrets.BASE_URL }}"
-        echo "PORT: ${{ secrets.BASE_PORT }}"
+        echo "Целевой хост: ${{ secrets.BASE_URL }}:${{ secrets.BASE_PORT }}"
         
-        # Добавляем логирование переменных перед тестом через простой скрипт JMeter (опционально)
-        # Но сначала попробуем просто запустить с флагом -J
-        
+        # Запускаем с флагом -L DEBUG для подробных логов внутри result.jtl
         $JMETER_HOME/bin/jmeter -n \
           -Djava.awt.headless=true \
           -Jbase_url=${{ secrets.BASE_URL }} \
@@ -61,13 +55,13 @@ jobs:
           -t LERS_Auth_Test_CI.jmx \
           -l result.jtl \
           -e -o report \
-          -L DEBUG  # Включаем подробное логирование JMeter
+          -L org.apache.jmeter.protocol.http=DEBUG
 
-    - name: Upload Report & Logs
+    - name: Upload Debug Artifacts
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: jmeter-debug-report
+        name: debug-logs-and-report
         path: |
           jmeter-tests/report/
           jmeter-tests/result.jtl
