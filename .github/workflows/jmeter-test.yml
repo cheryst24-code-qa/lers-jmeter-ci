@@ -1,12 +1,17 @@
 name: JMeter Load Test
 
-on: [push, workflow_dispatch]
+on: 
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout Code
+      uses: actions/checkout@v4
 
     - name: Set up JDK 11
       uses: actions/setup-java@v4
@@ -14,54 +19,124 @@ jobs:
         java-version: '11'
         distribution: 'temurin'
 
-    - name: Download JMeter
-      run: |
-        wget https://archive.apache.org/dist/jmeter/binaries/apache-jmeter-5.6.3.tgz
-        tar -xzf apache-jmeter-5.6.3.tgz
+    - name: Cache JMeter
+      id: cache-jmeter
+      uses: actions/cache@v4
+      with:
+        path: apache-jmeter-5.6.3
+        key: ${{ runner.os }}-jmeter-5.6.3
 
-    - name: Prepare secrets & Debug CSV
+    - name: Download JMeter
+      if: steps.cache-jmeter.outputs.cache-hit != 'true'
+      run: |
+        wget -q https://archive.apache.org/dist/jmeter/binaries/apache-jmeter-5.6.3.tgz
+        tar -xzf apache-jmeter-5.6.3.tgz
+        rm apache-jmeter-5.6.3.tgz
+
+    - name: Set Environment Variables
+      run: |
+        echo "JMETER_HOME=${{ github.workspace }}/apache-jmeter-5.6.3" >> $GITHUB_ENV
+
+    - name: Prepare Test Data (Secrets CSV)
       run: |
         mkdir -p jmeter-tests/test-data
-        
-        # Записываем секрет в файл
-        # Важно: В секрете SECRETS_CSV_CONTENT должно быть: login,password (через запятую)
         echo "${{ secrets.SECRETS_CSV_CONTENT }}" > jmeter-tests/test-data/secrets.csv
-        
-        echo "=== ДИАГНОСТИКА CSV ФАЙЛА ==="
-        echo "1. Обычный вывод:"
-        cat jmeter-tests/test-data/secrets.csv
-        echo ""
-        echo "2. Побайтовый вывод (ищем лишние пробелы/символы):"
-        # cat -A покажет $ в конце строки и любые скрытые символы
-        cat -A jmeter-tests/test-data/secrets.csv
-        echo "=============================="
-        
-        # Проверка длины строки
-        echo "Длина строки (символов): $(wc -c < jmeter-tests/test-data/secrets.csv)"
+        if [ ! -s jmeter-tests/test-data/secrets.csv ]; then
+          echo "::error::Файл secrets.csv пуст!"
+          exit 1
+        fi
 
-    - name: Run JMeter Test with Debug
+    - name: Run JMeter Test
       working-directory: jmeter-tests
       run: |
-        export JMETER_HOME=${{ github.workspace }}/apache-jmeter-5.6.3
-        
-        echo "Запуск теста..."
-        echo "Целевой хост: ${{ secrets.BASE_URL }}:${{ secrets.BASE_PORT }}"
-        
-        # Запускаем с флагом -L DEBUG для подробных логов внутри result.jtl
+        echo "🚀 Starting Load Test..."
         $JMETER_HOME/bin/jmeter -n \
           -Djava.awt.headless=true \
           -Jbase_url=${{ secrets.BASE_URL }} \
           -Jport=${{ secrets.BASE_PORT }} \
           -t LERS_Auth_Test_CI.jmx \
           -l result.jtl \
-          -e -o report \
-          -L org.apache.jmeter.protocol.http=DEBUG
+          -e -o report
 
-    - name: Upload Debug Artifacts
+    # 🆕 НОВЫЙ ШАГ: Генерация статистики для вкладки Summary
+    - name: Generate Test Summary
+      if: always()
+      working-directory: jmeter-tests
+      run: |
+        echo "⏳ Анализ результатов теста..."
+        
+        # Парсим JTL файл (формат CSV по умолчанию в новых версиях или XML, но JMeter 5.x часто пишет CSV в CLI если не указано иное)
+        # Примечание: JMeter по умолчанию в CLI пишет CSV в .jtl, если в jmeter.properties не задано xml.
+        # Для надежности используем awk для подсчета.
+        
+        TOTAL=$(wc -l < result.jtl)
+        # Вычитаем заголовок, если он есть (обычно 1 строка)
+        if head -1 result.jtl | grep -q "timeStamp"; then
+          TOTAL=$((TOTAL - 1))
+        fi
+
+        # Подсчет ошибок (где success = false)
+        # В CSV формате JMeter: timeStamp,elapsed,label,responseCode,responseMessage,threadName,success,...
+        # Column 7 (index 6) обычно success (true/false)
+        ERRORS=$(awk -F',' '$7 == "false" {count++} END {print count+0}' result.jtl)
+        
+        # Расчет процента ошибок
+        if [ "$TOTAL" -gt 0 ]; then
+          ERROR_RATE=$(awk "BEGIN {printf \"%.2f\", ($ERRORS / $TOTAL) * 100}")
+        else
+          ERROR_RATE="0.00"
+        fi
+
+        # Расчет среднего времени ответа (Column 2 - elapsed)
+        AVG_TIME=$(awk -F',' 'NR>1 && $1 !~ /timeStamp/ {sum+=$2; count++} END {if(count>0) printf "%.0f", sum/count; else print "0"}' result.jtl)
+        MIN_TIME=$(awk -F',' 'NR>1 && $1 !~ /timeStamp/ {if(min==""){min=$2} if($2<min){min=$2}} END {print min}' result.jtl)
+        MAX_TIME=$(awk -F',' 'NR>1 && $1 !~ /timeStamp/ {if(max==""){max=$2} if($2>max){max=$2}} END {print max}' result.jtl)
+        
+        # Длительность теста (первый и последний timestamp)
+        # Column 1 - timeStamp
+        START_TIME=$(awk -F',' 'NR==2 {print $1}' result.jtl)
+        END_TIME=$(awk -F',' 'END {print $1}' result.jtl)
+        DURATION_SEC=$(( (END_TIME - START_TIME) / 1000 ))
+        if [ "$DURATION_SEC" -eq 0 ]; then DURATION_SEC=1; fi
+        
+        THROUGHPUT=$(awk "BEGIN {printf \"%.2f\", $TOTAL / $DURATION_SEC}")
+
+        # Формирование отчета в Markdown
+        cat >> $GITHUB_STEP_SUMMARY << EOF
+# 📊 Отчет о нагрузочном тестировании
+
+| Метрика | Значение |
+| :--- | :--- |
+| **Всего запросов** | $TOTAL |
+| **Ошибки** | $ERRORS (**${ERROR_RATE}%**) |
+| **Среднее время (Avg)** | ${AVG_TIME} ms |
+| **Мин. время (Min)** | ${MIN_TIME} ms |
+| **Макс. время (Max)** | ${MAX_TIME} ms |
+| **Пропускная способность** | ${THROUGHPUT} req/sec |
+| **Длительность** | ${DURATION_SEC} сек |
+
+### Статус
+EOF
+
+        if [ "$ERRORS" -gt 0 ]; then
+          echo "❌ **Тест завершен с ошибками!** Проверьте артефакты для деталей." >> $GITHUB_STEP_SUMMARY
+          exit 1 # Возвращаем ошибку, чтобы пайплайн стал красным, если есть ошибки
+        else
+          echo "✅ **Все тесты пройдены успешно!**" >> $GITHUB_STEP_SUMMARY
+        fi
+
+    - name: Upload HTML Report
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: debug-logs-and-report
-        path: |
-          jmeter-tests/report/
-          jmeter-tests/result.jtl
+        name: jmeter-report-run-${{ github.run_id }}
+        path: jmeter-tests/report/
+        retention-days: 7
+
+    - name: Upload Raw Results (JTL)
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: jmeter-raw-data-run-${{ github.run_id }}
+        path: jmeter-tests/result.jtl
+        retention-days: 3
