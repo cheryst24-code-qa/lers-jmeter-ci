@@ -62,69 +62,96 @@ jobs:
     - name: Generate Test Summary
       if: always()
       working-directory: jmeter-tests
+      shell: bash
       run: |
         echo "⏳ Анализ результатов теста..."
         
-        # Парсим JTL файл (формат CSV по умолчанию в новых версиях или XML, но JMeter 5.x часто пишет CSV в CLI если не указано иное)
-        # Примечание: JMeter по умолчанию в CLI пишет CSV в .jtl, если в jmeter.properties не задано xml.
-        # Для надежности используем awk для подсчета.
-        
-        TOTAL=$(wc -l < result.jtl)
-        # Вычитаем заголовок, если он есть (обычно 1 строка)
+        # Проверка существования файла
+        if [ ! -f result.jtl ]; then
+          echo "::error::Файл result.jtl не найден!"
+          exit 1
+        fi
+
+        # Подсчет общего количества строк (запросов)
+        # Вычитаем 1, если первая строка - заголовок (содержит timeStamp)
+        TOTAL_LINES=$(wc -l < result.jtl)
         if head -1 result.jtl | grep -q "timeStamp"; then
-          TOTAL=$((TOTAL - 1))
-        fi
-
-        # Подсчет ошибок (где success = false)
-        # В CSV формате JMeter: timeStamp,elapsed,label,responseCode,responseMessage,threadName,success,...
-        # Column 7 (index 6) обычно success (true/false)
-        ERRORS=$(awk -F',' '$7 == "false" {count++} END {print count+0}' result.jtl)
-        
-        # Расчет процента ошибок
-        if [ "$TOTAL" -gt 0 ]; then
-          ERROR_RATE=$(awk "BEGIN {printf \"%.2f\", ($ERRORS / $TOTAL) * 100}")
+          TOTAL=$((TOTAL_LINES - 1))
         else
+          TOTAL=$TOTAL_LINES
+        fi
+        
+        # Защита от деления на ноль
+        if [ "$TOTAL" -le 0 ]; then
+          echo "::warning::Нет данных для анализа (пустой файл результата)"
+          TOTAL=0
+          ERRORS=0
           ERROR_RATE="0.00"
-        fi
-
-        # Расчет среднего времени ответа (Column 2 - elapsed)
-        AVG_TIME=$(awk -F',' 'NR>1 && $1 !~ /timeStamp/ {sum+=$2; count++} END {if(count>0) printf "%.0f", sum/count; else print "0"}' result.jtl)
-        MIN_TIME=$(awk -F',' 'NR>1 && $1 !~ /timeStamp/ {if(min==""){min=$2} if($2<min){min=$2}} END {print min}' result.jtl)
-        MAX_TIME=$(awk -F',' 'NR>1 && $1 !~ /timeStamp/ {if(max==""){max=$2} if($2>max){max=$2}} END {print max}' result.jtl)
-        
-        # Длительность теста (первый и последний timestamp)
-        # Column 1 - timeStamp
-        START_TIME=$(awk -F',' 'NR==2 {print $1}' result.jtl)
-        END_TIME=$(awk -F',' 'END {print $1}' result.jtl)
-        DURATION_SEC=$(( (END_TIME - START_TIME) / 1000 ))
-        if [ "$DURATION_SEC" -eq 0 ]; then DURATION_SEC=1; fi
-        
-        THROUGHPUT=$(awk "BEGIN {printf \"%.2f\", $TOTAL / $DURATION_SEC}")
-
-        # Формирование отчета в Markdown
-        cat >> $GITHUB_STEP_SUMMARY << EOF
-# 📊 Отчет о нагрузочном тестировании
-
-| Метрика | Значение |
-| :--- | :--- |
-| **Всего запросов** | $TOTAL |
-| **Ошибки** | $ERRORS (**${ERROR_RATE}%**) |
-| **Среднее время (Avg)** | ${AVG_TIME} ms |
-| **Мин. время (Min)** | ${MIN_TIME} ms |
-| **Макс. время (Max)** | ${MAX_TIME} ms |
-| **Пропускная способность** | ${THROUGHPUT} req/sec |
-| **Длительность** | ${DURATION_SEC} сек |
-
-### Статус
-EOF
-
-        if [ "$ERRORS" -gt 0 ]; then
-          echo "❌ **Тест завершен с ошибками!** Проверьте артефакты для деталей." >> $GITHUB_STEP_SUMMARY
-          exit 1 # Возвращаем ошибку, чтобы пайплайн стал красным, если есть ошибки
+          AVG_TIME=0
+          MIN_TIME=0
+          MAX_TIME=0
+          THROUGHPUT="0.00"
+          DURATION_SEC=0
         else
-          echo "✅ **Все тесты пройдены успешно!**" >> $GITHUB_STEP_SUMMARY
+          # Подсчет ошибок (7-я колонка в CSV JMeter: success)
+          # true/false находится в 7-м поле (индекс 6 при счете с 0, но awk считает поля $1, $2...)
+          # Формат JMeter CSV: timeStamp,elapsed,label,responseCode,responseMessage,threadName,success,...
+          ERRORS=$(awk -F',' '$7 == "false" {count++} END {print count+0}' result.jtl)
+          
+          # Расчет процента ошибок
+          ERROR_RATE=$(awk "BEGIN {printf \"%.2f\", ($ERRORS / $TOTAL) * 100}")
+          
+          # Расчет времени ответа (2-я колонка: elapsed)
+          # Пропускаем заголовок (NR>1) и строки без чисел
+          AVG_TIME=$(awk -F',' 'NR>1 && $2 ~ /^[0-9]+$/ {sum+=$2; count++} END {if(count>0) printf "%.0f", sum/count; else print "0"}' result.jtl)
+          MIN_TIME=$(awk -F',' 'NR>1 && $2 ~ /^[0-9]+$/ {if(min=="" || $2<min){min=$2}} END {print min+0}' result.jtl)
+          MAX_TIME=$(awk -F',' 'NR>1 && $2 ~ /^[0-9]+$/ {if(max=="" || $2>max){max=$2}} END {print max+0}' result.jtl)
+          
+          # Длительность теста (1-я колонка: timeStamp в мс)
+          START_TIME=$(awk -F',' 'NR==2 {print $1}' result.jtl)
+          END_TIME=$(awk -F',' 'END {print $1}' result.jtl)
+          
+          if [ -n "$START_TIME" ] && [ -n "$END_TIME" ]; then
+            DURATION_MS=$((END_TIME - START_TIME))
+            DURATION_SEC=$((DURATION_MS / 1000))
+            if [ "$DURATION_SEC" -eq 0 ]; then DURATION_SEC=1; fi
+            THROUGHPUT=$(awk "BEGIN {printf \"%.2f\", $TOTAL / $DURATION_SEC}")
+          else
+            DURATION_SEC=0
+            THROUGHPUT="0.00"
+          fi
         fi
 
+        # Вывод статистики в консоль (для лога)
+        echo "Всего запросов: $TOTAL"
+        echo "Ошибки: $ERRORS ($ERROR_RATE%)"
+        echo "Avg: ${AVG_TIME}ms, Min: ${MIN_TIME}ms, Max: ${MAX_TIME}ms"
+        
+        # Формирование Markdown отчета для вкладки Summary
+        {
+          echo "# 📊 Отчет о нагрузочном тестировании"
+          echo ""
+          echo "| Метрика | Значение |"
+          echo "| :--- | :--- |"
+          echo "| **Всего запросов** | $TOTAL |"
+          echo "| **Ошибки** | $ERRORS (**${ERROR_RATE}%**) |"
+          echo "| **Среднее время (Avg)** | ${AVG_TIME} ms |"
+          echo "| **Мин. время (Min)** | ${MIN_TIME} ms |"
+          echo "| **Макс. время (Max)** | ${MAX_TIME} ms |"
+          echo "| **Пропускная способность** | ${THROUGHPUT} req/sec |"
+          echo "| **Длительность** | ${DURATION_SEC} сек |"
+          echo ""
+          echo "### Статус"
+          
+          if [ "$ERRORS" -gt 0 ]; then
+            echo "❌ **Тест завершен с ошибками!** Проверьте артефакты для деталей."
+            # Возвращаем ошибку, чтобы пайплайн стал красным
+            exit 1 
+          else
+            echo "✅ **Все тесты пройдены успешно!**"
+          fi
+        } >> $GITHUB_STEP_SUMMARY
+         
     - name: Upload HTML Report
       if: always()
       uses: actions/upload-artifact@v4
