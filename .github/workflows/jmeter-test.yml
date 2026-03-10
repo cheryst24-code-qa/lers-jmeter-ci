@@ -8,6 +8,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     
     steps:
     - name: Checkout Code
@@ -40,7 +41,7 @@ jobs:
     - name: Prepare Test Data (Secrets CSV)
       run: |
         mkdir -p jmeter-tests/test-data
-        echo "${{ secrets.SECRETS_CSV_CONTENT }}" > jmeter-tests/test-data/secrets.csv
+        printf '%b\n' "${{ secrets.SECRETS_CSV_CONTENT }}" > jmeter-tests/test-data/secrets.csv
         if [ ! -s jmeter-tests/test-data/secrets.csv ]; then
           echo "::error::Файл secrets.csv пуст!"
           exit 1
@@ -49,31 +50,28 @@ jobs:
     - name: Run JMeter Test
       working-directory: jmeter-tests
       run: |
-        echo "🚀 Starting Load Test..."
+        echo "Starting Load Test..."
         $JMETER_HOME/bin/jmeter -n \
           -Djava.awt.headless=true \
+          -Jjmeter.save.saveservice.output_format=csv \
           -Jbase_url=${{ secrets.BASE_URL }} \
-          -Jport=${{ secrets.BASE_PORT }} \
+          -Jbase_port=${{ secrets.BASE_PORT }} \
           -t LERS_Auth_Test_CI.jmx \
           -l result.jtl \
           -e -o report
 
-    # 🆕 НОВЫЙ ШАГ: Генерация статистики для вкладки Summary
     - name: Generate Test Summary
       if: always()
       working-directory: jmeter-tests
       shell: bash
       run: |
-        echo "⏳ Анализ результатов теста..."
+        echo "Анализ результатов теста..."
         
-        # Проверка существования файла
-        if [ ! -f result.jtl ]; then
-          echo "::error::Файл result.jtl не найден!"
+        if [ ! -f result.jtl ] || [ ! -s result.jtl ]; then
+          echo "::error::Файл result.jtl не найден или пуст!"
           exit 1
         fi
 
-        # Подсчет общего количества строк (запросов)
-        # Вычитаем 1, если первая строка - заголовок (содержит timeStamp)
         TOTAL_LINES=$(wc -l < result.jtl)
         if head -1 result.jtl | grep -q "timeStamp"; then
           TOTAL=$((TOTAL_LINES - 1))
@@ -81,72 +79,48 @@ jobs:
           TOTAL=$TOTAL_LINES
         fi
         
-        # Защита от деления на ноль
         if [ "$TOTAL" -le 0 ]; then
-          echo "::warning::Нет данных для анализа (пустой файл результата)"
-          TOTAL=0
-          ERRORS=0
-          ERROR_RATE="0.00"
-          AVG_TIME=0
-          MIN_TIME=0
-          MAX_TIME=0
-          THROUGHPUT="0.00"
-          DURATION_SEC=0
+          ERROR_RATE="0.00"; AVG_TIME=0; MIN_TIME=0; MAX_TIME=0; THROUGHPUT="0.00"; DURATION_SEC=0; ERRORS=0
         else
-          # Подсчет ошибок (7-я колонка в CSV JMeter: success)
-          # true/false находится в 7-м поле (индекс 6 при счете с 0, но awk считает поля $1, $2...)
-          # Формат JMeter CSV: timeStamp,elapsed,label,responseCode,responseMessage,threadName,success,...
           ERRORS=$(awk -F',' '$7 == "false" {count++} END {print count+0}' result.jtl)
-          
-          # Расчет процента ошибок
           ERROR_RATE=$(awk "BEGIN {printf \"%.2f\", ($ERRORS / $TOTAL) * 100}")
-          
-          # Расчет времени ответа (2-я колонка: elapsed)
-          # Пропускаем заголовок (NR>1) и строки без чисел
           AVG_TIME=$(awk -F',' 'NR>1 && $2 ~ /^[0-9]+$/ {sum+=$2; count++} END {if(count>0) printf "%.0f", sum/count; else print "0"}' result.jtl)
           MIN_TIME=$(awk -F',' 'NR>1 && $2 ~ /^[0-9]+$/ {if(min=="" || $2<min){min=$2}} END {print min+0}' result.jtl)
           MAX_TIME=$(awk -F',' 'NR>1 && $2 ~ /^[0-9]+$/ {if(max=="" || $2>max){max=$2}} END {print max+0}' result.jtl)
           
-          # Длительность теста (1-я колонка: timeStamp в мс)
           START_TIME=$(awk -F',' 'NR==2 {print $1}' result.jtl)
           END_TIME=$(awk -F',' 'END {print $1}' result.jtl)
-          
           if [ -n "$START_TIME" ] && [ -n "$END_TIME" ]; then
             DURATION_MS=$((END_TIME - START_TIME))
             DURATION_SEC=$((DURATION_MS / 1000))
-            if [ "$DURATION_SEC" -eq 0 ]; then DURATION_SEC=1; fi
+            [ "$DURATION_SEC" -eq 0 ] && DURATION_SEC=1
             THROUGHPUT=$(awk "BEGIN {printf \"%.2f\", $TOTAL / $DURATION_SEC}")
           else
-            DURATION_SEC=0
-            THROUGHPUT="0.00"
+            DURATION_SEC=0; THROUGHPUT="0.00"
           fi
         fi
 
-        # Вывод статистики в консоль (для лога)
         echo "Всего запросов: $TOTAL"
         echo "Ошибки: $ERRORS ($ERROR_RATE%)"
         echo "Avg: ${AVG_TIME}ms, Min: ${MIN_TIME}ms, Max: ${MAX_TIME}ms"
         
-        # Формирование Markdown отчета для вкладки Summary
         {
-          echo "## 📊 Отчет о нагрузочном тестировании"
+          echo "## Отчет о нагрузочном тестировании"
           echo ""
           echo "| Метрика | Значение |"
           echo "| :--- | :--- |"
           echo "| **Всего запросов** | $TOTAL |"
           echo "| **Ошибки** | $ERRORS (**${ERROR_RATE}%**) |"
-          echo "| **Среднее время (Avg)** | ${AVG_TIME} ms |"
-          echo "| **Мин. время (Min)** | ${MIN_TIME} ms |"
-          echo "| **Макс. время (Max)** | ${MAX_TIME} ms |"
+          echo "| **Среднее время** | ${AVG_TIME} ms |"
+          echo "| **Мин. время** | ${MIN_TIME} ms |"
+          echo "| **Макс. время** | ${MAX_TIME} ms |"
           echo "| **Пропускная способность** | ${THROUGHPUT} req/sec |"
           echo "| **Длительность** | ${DURATION_SEC} сек |"
           echo ""
           echo "### Статус"
-          
           if [ "$ERRORS" -gt 0 ]; then
-            echo "❌ **Тест завершен с ошибками!** Проверьте артефакты для деталей."
-            # Возвращаем ошибку, чтобы пайплайн стал красным
-            exit 1 
+            echo "❌ **Тест завершен с ошибками!**"
+            exit 1
           else
             echo "✅ **Все тесты пройдены успешно!**"
           fi
@@ -167,3 +141,14 @@ jobs:
         name: jmeter-raw-data-run-${{ github.run_id }}
         path: jmeter-tests/result.jtl
         retention-days: 3
+
+    - name: Deploy Report to GitHub Pages
+      if: success()
+      uses: peaceiris/actions-gh-pages@v4
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ./jmeter-tests/report
+        destination_dir: reports/run-${{ github.run_id }}
+        keep_files: true
+        commit_message: 'Отчёт: Запуск #${{ github.run_id }}'
+        enable_jekyll: false

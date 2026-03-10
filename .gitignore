@@ -6,6 +6,7 @@ jmeter-tests/jmeter.log
 
 # Secrets - не для github
 jmeter-tests/test-data/secrets.csv
+jmeter-tests/test-data/.env.local
 
 # OS files
 .DS_Store      # macOS
@@ -15,4 +16,6 @@ desktop.ini    # Windows (ещё один служебный файл)
 jmeter-tests/LERS_Auth_Test.jmx
 jmeter-tests/LERS_Auth_Login_Success.jmx
 
-jmeter-tests/node_modules/
+# Node.js
+node_modules/
+package-lock.json
