@@ -2,7 +2,7 @@ name: JMeter Load Test
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [main, master]
   workflow_dispatch:
 
 jobs:
@@ -11,348 +11,105 @@ jobs:
     timeout-minutes: 15
 
     steps:
-    - name: Checkout Code
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
-    - name: Set up JDK 11
-      uses: actions/setup-java@v4
-      with:
-        java-version: '11'
-        distribution: 'temurin'
+      - name: Set up JDK 11
+        uses: actions/setup-java@v4
+        with:
+          java-version: '11'
+          distribution: 'temurin'
 
-    - name: Cache JMeter
-      id: cache-jmeter
-      uses: actions/cache@v4
-      with:
-        path: apache-jmeter-5.6.3
-        key: ${{ runner.os }}-jmeter-5.6.3
+      - name: Cache JMeter
+        id: cache-jmeter
+        uses: actions/cache@v4
+        with:
+          path: apache-jmeter-5.6.3
+          key: ${{ runner.os }}-jmeter-5.6.3
 
-    - name: Download JMeter
-      if: steps.cache-jmeter.outputs.cache-hit != 'true'
-      run: |
-        wget -q https://archive.apache.org/dist/jmeter/binaries/apache-jmeter-5.6.3.tgz
-        tar -xzf apache-jmeter-5.6.3.tgz
-        rm apache-jmeter-5.6.3.tgz
+      - name: Download JMeter
+        if: steps.cache-jmeter.outputs.cache-hit != 'true'
+        run: |
+          wget -q https://archive.apache.org/dist/jmeter/binaries/apache-jmeter-5.6.3.tgz
+          tar -xzf apache-jmeter-5.6.3.tgz
+          rm apache-jmeter-5.6.3.tgz
 
-    - name: Set Environment Variables
-      run: |
-        echo "JMETER_HOME=${{ github.workspace }}/apache-jmeter-5.6.3" >> $GITHUB_ENV
+      - name: Set Environment Variables
+        run: |
+          echo "JMETER_HOME=${{ github.workspace }}/apache-jmeter-5.6.3" >> $GITHUB_ENV
 
-    - name: Prepare Test Data (Secrets CSV)
-      run: |
-        mkdir -p jmeter-tests/test-data
-        printf '%s\n' "${{ secrets.SECRETS_CSV_CONTENT }}" > jmeter-tests/test-data/secrets.csv
-        if [ ! -s jmeter-tests/test-data/secrets.csv ]; then
-          echo "::error::Файл secrets.csv пуст!"
-          exit 1
-        fi
+      - name: Prepare Test Data
+        run: |
+          mkdir -p jmeter-tests/test-data
+          printf '%b\n' "${{ secrets.SECRETS_CSV_CONTENT }}" > jmeter-tests/test-data/secrets.csv
 
-    - name: Setup Puppeteer for Screenshot
-      if: success()
-      run: |
-        npm install puppeteer
-        sudo apt-get update && sudo apt-get install -y \
-          libgbm1 libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
-          libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 \
-          libxrandr2 libgbm1 libasound2 libpango-1.0-0 libcairo2 || true
+      - name: Install Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq bc
 
-    - name: Run JMeter Test
-      working-directory: jmeter-tests
-      run: |
-        echo " Starting Load Test..."
-        $JMETER_HOME/bin/jmeter -n \
-          -Djava.awt.headless=true \
-          -Jjmeter.save.saveservice.output_format=csv \
-          -Jbase_url="${{ secrets.BASE_URL }}" \
-          -Jbase_port="${{ secrets.BASE_PORT }}" \
-          -t LERS_Auth_Test_CI.jmx \
-          -l result.jtl \
-          -e -o report
+      - name: Run JMeter Test
+        working-directory: jmeter-tests
+        run: |
+          echo "Starting Load Test..."
+          $JMETER_HOME/bin/jmeter -n \
+            -Djava.awt.headless=true \
+            -Jjmeter.save.saveservice.output_format=csv \
+            -Jbase_url=${{ secrets.BASE_URL }} \
+            -Jbase_port=${{ secrets.BASE_PORT }} \
+            -t LERS_Auth_Test_CI.jmx \
+            -l result.jtl \
+            -e -o report
 
-    - name: Generate Test Summary & Regression Analysis
-      if: always()
-      working-directory: jmeter-tests
-      shell: bash
-      run: |
-        echo "Анализ результатов и регрессионное сравнение..."
+      - name: Generate Summary
+        if: always()
+        working-directory: jmeter-tests
+        run: |
+          echo "## Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f result.jtl ] && [ -s result.jtl ]; then
+            TOTAL=$(wc -l < result.jtl)
+            ERRORS=$(awk -F',' '$7=="false"{c++}END{print c+0}' result.jtl)
+            AVG=$(awk -F',' 'NR>1&&$2~/^[0-9]+$/{s+=$2;c++}END{printf "%.0f",s/c}' result.jtl)
+            ERR_PCT=$(awk "BEGIN{printf \"%.2f\",($ERRORS/$TOTAL)*100}")
+            echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+            echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+            echo "| Requests | $TOTAL |" >> $GITHUB_STEP_SUMMARY
+            echo "| Errors | $ERRORS ($ERR_PCT%) |" >> $GITHUB_STEP_SUMMARY
+            echo "| Avg Time | ${AVG} ms |" >> $GITHUB_STEP_SUMMARY
+            echo "AVG_TIME=$AVG" >> $GITHUB_ENV
+            echo "ERROR_RATE=$ERR_PCT" >> $GITHUB_ENV
+            echo "TOTAL_REQ=$TOTAL" >> $GITHUB_ENV
+          fi
 
-        # === Чтение текущих метрик ===
-        if [ -f result.jtl ] && [ -s result.jtl ]; then
-          TOTAL_LINES=$(wc -l < result.jtl)
-          if head -1 result.jtl | grep -q "timeStamp"; then
-            TOTAL=$((TOTAL_LINES - 1))
+      - name: Notify Telegram
+        if: always()
+        run: |
+          STATUS="${{ job.status }}"
+          if [ "$STATUS" = "success" ]; then
+            EMOJI="OK"
+            TEXT="PASSED"
           else
-            TOTAL=$TOTAL_LINES
+            EMOJI="FAIL"
+            TEXT="FAILED"
           fi
+          MSG="${EMOJI} Test ${TEXT} - Repo: ${{ github.repository }} - Requests: ${{ env.TOTAL_REQ }} - Errors: ${{ env.ERROR_RATE }}% - Time: ${{ env.AVG_TIME }} ms"
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" -d text="$MSG" -d parse_mode="Markdown" || true
 
-          ERRORS=$(awk -F',' '$7 == "false" {count++} END {print count+0}' result.jtl)
-          ERROR_RATE=$(awk "BEGIN {printf \"%.2f\", ($ERRORS / $TOTAL) * 100}")
-          AVG_TIME=$(awk -F',' 'NR>1 && $2 ~ /^[0-9]+$/ {sum+=$2; count++} END {if(count>0) printf "%.0f", sum/count; else print "0"}' result.jtl)
-          MIN_TIME=$(awk -F',' 'NR>1 && $2 ~ /^[0-9]+$/ {if(min=="" || $2<min){min=$2}} END {print min+0}' result.jtl)
-          MAX_TIME=$(awk -F',' 'NR>1 && $2 ~ /^[0-9]+$/ {if(max=="" || $2>max){max=$2}} END {print max+0}' result.jtl)
+      - name: Upload Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jmeter-report-${{ github.run_id }}
+          path: jmeter-tests/report/
+          retention-days: 7
 
-          START_TIME=$(awk -F',' 'NR==2 {print $1}' result.jtl)
-          END_TIME=$(awk -F',' 'END {print $1}' result.jtl)
-          if [ -n "$START_TIME" ] && [ -n "$END_TIME" ]; then
-            DURATION_MS=$((END_TIME - START_TIME))
-            DURATION_SEC=$((DURATION_MS / 1000))
-            [ "$DURATION_SEC" -eq 0 ] && DURATION_SEC=1
-            THROUGHPUT=$(awk "BEGIN {printf \"%.2f\", $TOTAL / $DURATION_SEC}")
-          else
-            DURATION_SEC=0; THROUGHPUT="0.00"
-          fi
-        else
-          TOTAL=0; ERRORS=0; ERROR_RATE="0.00"
-          AVG_TIME=0; MIN_TIME=0; MAX_TIME=0
-          THROUGHPUT="0.00"; DURATION_SEC=0
-        fi
-
-        # === Чтение предыдущих метрик (из gh-pages ветки) ===
-        PREV_AVG="N/A"; PREV_ERROR="N/A"; PREV_THROUGHPUT="N/A"
-        REGRESSION_AVG=""; REGRESSION_ERROR=""; REGRESSION_THROUGHPUT=""
-
-        if git fetch origin gh-pages --depth=1 2>/dev/null; then
-          if git show origin/gh-pages:metrics/current-run.json > metrics/prev-run.json 2>/dev/null; then
-            PREV_AVG=$(jq -r '.avgResponseTime // "N/A"' metrics/prev-run.json)
-            PREV_ERROR=$(jq -r '.errorPercent // "N/A"' metrics/prev-run.json)
-            PREV_THROUGHPUT=$(jq -r '.throughput // "N/A"' metrics/prev-run.json)
-
-            if [[ "$PREV_AVG" =~ ^[0-9]+(\.[0-9]+)?$ ]] && [ "$AVG_TIME" != "0" ]; then
-              DIFF_AVG=$(awk "BEGIN {printf \"%.1f\", (($AVG_TIME - $PREV_AVG) / $PREV_AVG) * 100}")
-              if (( $(echo "$DIFF_AVG > 10" | bc -l) )); then
-                REGRESSION_AVG="⚠️ +${DIFF_AVG}% (деградация)"
-              elif (( $(echo "$DIFF_AVG < -10" | bc -l) )); then
-                REGRESSION_AVG="✅ ${DIFF_AVG}% (улучшение)"
-              else
-                REGRESSION_AVG="➡️ ${DIFF_AVG}% (в норме)"
-              fi
-            fi
-
-            if [[ "$PREV_ERROR" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
-              DIFF_ERROR=$(awk "BEGIN {printf \"%.2f\", $ERROR_RATE - $PREV_ERROR}")
-              if (( $(echo "$DIFF_ERROR > 1" | bc -l) )); then
-                REGRESSION_ERROR="⚠️ +${DIFF_ERROR}% (больше ошибок)"
-              elif (( $(echo "$DIFF_ERROR < -1" | bc -l) )); then
-                REGRESSION_ERROR="✅ ${DIFF_ERROR}% (меньше ошибок)"
-              else
-                REGRESSION_ERROR="➡️ ${DIFF_ERROR}% (стабильно)"
-              fi
-            fi
-
-            if [[ "$PREV_THROUGHPUT" =~ ^[0-9]+(\.[0-9]+)?$ ]] && [ "$THROUGHPUT" != "0.00" ]; then
-              DIFF_THROUGHPUT=$(awk "BEGIN {printf \"%.1f\", (($THROUGHPUT - $PREV_THROUGHPUT) / $PREV_THROUGHPUT) * 100}")
-              if (( $(echo "$DIFF_THROUGHPUT > 10" | bc -l) )); then
-                REGRESSION_THROUGHPUT="✅ +${DIFF_THROUGHPUT}% (быстрее)"
-              elif (( $(echo "$DIFF_THROUGHPUT < -10" | bc -l) )); then
-                REGRESSION_THROUGHPUT="⚠️ ${DIFF_THROUGHPUT}% (медленнее)"
-              else
-                REGRESSION_THROUGHPUT="➡️ ${DIFF_THROUGHPUT}% (стабильно)"
-              fi
-            fi
-          fi
-        fi
-
-        mkdir -p metrics
-        cat > metrics/current-run.json << EOF
-        {
-          "runId": "${{ github.run_id }}",
-          "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-          "avgResponseTime": $AVG_TIME,
-          "errorPercent": $ERROR_RATE,
-          "throughput": $THROUGHPUT,
-          "totalRequests": $TOTAL,
-          "errorCount": $ERRORS
-        }
-        EOF
-
-        {
-          echo "## Отчет о нагрузочном тестировании"
-          echo ""
-          echo "| Метрика | Текущий запуск | Предыдущий | Изменение |"
-          echo "| :--- | :--- | :--- | :--- |"
-          echo "| **Всего запросов** | $TOTAL | — | — |"
-          echo "| **Ошибки** | $ERRORS (**${ERROR_RATE}%**) | $PREV_ERROR | ${REGRESSION_ERROR:-—} |"
-          echo "| **Среднее время** | ${AVG_TIME} ms | ${PREV_AVG} ms | ${REGRESSION_AVG:-—} |"
-          echo "| **Мин. время** | ${MIN_TIME} ms | — | — |"
-          echo "| **Макс. время** | ${MAX_TIME} ms | — | — |"
-          echo "| **Пропускная способность** | ${THROUGHPUT} req/sec | ${PREV_THROUGHPUT} | ${REGRESSION_THROUGHPUT:-—} |"
-          echo "| **Длительность** | ${DURATION_SEC} сек | — | — |"
-          echo ""
-          echo "### Статус"
-          if [ "$ERRORS" -gt 0 ]; then
-            echo "❌ **Тест завершен с ошибками!** Проверьте артефакты для деталей."
-            echo "exit-code=1" > metrics/exit-status.txt
-          else
-            echo "✅ **Все тесты пройдены успешно!**"
-            echo "exit-code=0" > metrics/exit-status.txt
-          fi
-        } >> $GITHUB_STEP_SUMMARY
-
-        echo "AVG_TIME=$AVG_TIME" >> $GITHUB_ENV
-        echo "ERROR_RATE=$ERROR_RATE" >> $GITHUB_ENV
-        echo "THROUGHPUT=$THROUGHPUT" >> $GITHUB_ENV
-        echo "TOTAL=$TOTAL" >> $GITHUB_ENV
-        echo "ERRORS=$ERRORS" >> $GITHUB_ENV
-        echo "MIN_TIME=$MIN_TIME" >> $GITHUB_ENV
-        echo "MAX_TIME=$MAX_TIME" >> $GITHUB_ENV
-        echo "DURATION_SEC=$DURATION_SEC" >> $GITHUB_ENV
-        echo "PREV_AVG=$PREV_AVG" >> $GITHUB_ENV
-        echo "PREV_ERROR=$PREV_ERROR" >> $GITHUB_ENV
-        echo "PREV_THROUGHPUT=$PREV_THROUGHPUT" >> $GITHUB_ENV
-        echo "REGRESSION_AVG=$REGRESSION_AVG" >> $GITHUB_ENV
-        echo "REGRESSION_ERROR=$REGRESSION_ERROR" >> $GITHUB_ENV
-        echo "REGRESSION_THROUGHPUT=$REGRESSION_THROUGHPUT" >> $GITHUB_ENV
-
-    - name: Generate Report Screenshot
-      if: success()
-      working-directory: jmeter-tests
-      run: |
-        node -e "
-        const puppeteer = require('puppeteer');
-        (async () => {
-          const browser = await puppeteer.launch({
-            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
-          });
-          const page = await browser.newPage();
-          await page.setViewport({ width: 1920, height: 1080 });
-          await page.goto('file://' + require('path').resolve('report/index.html'), {
-            waitUntil: 'networkidle0',
-            timeout: 30000
-          });
-          await page.screenshot({ path: 'report-screenshot.png', fullPage: true });
-          await browser.close();
-          console.log('✅ Скриншот создан: report-screenshot.png');
-        })().catch(err => {
-          console.error('❌ Ошибка скриншота:', err.message);
-          process.exit(1);
-        });
-        "
-
-    - name: Send Screenshot to Telegram
-      if: success()
-      working-directory: jmeter-tests
-      run: |
-        if [ -n "${{ secrets.TELEGRAM_BOT_TOKEN }}" ] && [ -f report-screenshot.png ]; then
-          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendPhoto" \
-            -F chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
-            -F photo="@report-screenshot.png" \
-            -F caption="📊 Скриншот отчёта: Запуск #${{ github.run_id }}" || echo "⚠️ Не удалось отправить скриншот"
-        fi
-
-    - name: Notify Telegram
-      if: always()
-      env:
-        TOTAL: ${{ env.TOTAL }}
-        ERRORS: ${{ env.ERRORS }}
-        ERROR_RATE: ${{ env.ERROR_RATE }}
-        AVG_TIME: ${{ env.AVG_TIME }}
-        MIN_TIME: ${{ env.MIN_TIME }}
-        MAX_TIME: ${{ env.MAX_TIME }}
-        THROUGHPUT: ${{ env.THROUGHPUT }}
-        DURATION_SEC: ${{ env.DURATION_SEC }}
-        PREV_AVG: ${{ env.PREV_AVG }}
-        PREV_ERROR: ${{ env.PREV_ERROR }}
-        PREV_THROUGHPUT: ${{ env.PREV_THROUGHPUT }}
-        REGRESSION_AVG: ${{ env.REGRESSION_AVG }}
-        REGRESSION_ERROR: ${{ env.REGRESSION_ERROR }}
-        REGRESSION_THROUGHPUT: ${{ env.REGRESSION_THROUGHPUT }}
-      run: |
-        # Проверяем, задан ли токен Telegram
-        if [ -z "${{ secrets.TELEGRAM_BOT_TOKEN }}" ]; then
-          echo "Токен Telegram не задан, пропускаем уведомление"
-          exit 0
-        fi
-
-        STATUS="${{ job.status }}"
-        if [ "$STATUS" = "success" ]; then
-          EMOJI="✅"
-          STATUS_TEXT="ПРОЙДЕН"
-        else
-          EMOJI="❌"
-          STATUS_TEXT="ПРОВАЛЕН"
-        fi
-
-        REPO_NAME="${{ github.event.repository.name }}"
-        OWNER="${{ github.repository_owner }}"
-        REPORT_URL="https://${OWNER}.github.io/${REPO_NAME}/reports/run-${{ github.run_id }}/index.html"
-
-        # Формируем сообщение (используем простой echo с экранированием)
-        MESSAGE="${EMOJI} *CI/CD: Нагрузочный тест ${STATUS_TEXT}!*
-
-*Информация о запуске:*
-Репозиторий: \`${{ github.repository }}\`
-Ветка: \`${{ github.ref_name }}\`
-Коммит: \`${{ github.sha }}\`
-Автор: ${{ github.actor }}
-
-*Результаты теста:*
-• Всего запросов: \`${TOTAL}\`
-• Ошибки: \`${ERRORS}\` (*${ERROR_RATE}%*)
-• Среднее время: \`${AVG_TIME} мс\`$( [ -n \"$REGRESSION_AVG\" ] && echo \" | ${REGRESSION_AVG}\" )
-• Мин. время: \`${MIN_TIME} мс\`
-• Макс. время: \`${MAX_TIME} мс\`
-• Пропускная способность: \`${THROUGHPUT} req/sec\`$( [ -n \"$REGRESSION_THROUGHPUT\" ] && echo \" | ${REGRESSION_THROUGHPUT}\" )
-• Длительность: \`${DURATION_SEC} сек\`
-
-*Сравнение с предыдущим запуском:*
-• Ошибки: ${PREV_ERROR} → ${ERROR_RATE}% | ${REGRESSION_ERROR:-—}
-• Среднее время: ${PREV_AVG} мс → ${AVG_TIME} мс | ${REGRESSION_AVG:-—}
-
-*Ссылки:*
-[Отчёт](${REPORT_URL})
-[Запуск в Actions](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
-
-        # Отправляем текст
-        curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
-          -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
-          -d text="$MESSAGE" \
-          -d parse_mode="Markdown" \
-          -d disable_web_page_preview="true" || echo "⚠️ Не удалось отправить текст"
-
-    - name: Upload HTML Report
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: jmeter-report-run-${{ github.run_id }}
-        path: jmeter-tests/report/
-        retention-days: 7
-
-    - name: Upload Raw Results (JTL)
-      if: failure()
-      uses: actions/upload-artifact@v4
-      with:
-        name: jmeter-raw-data-run-${{ github.run_id }}
-        path: jmeter-tests/result.jtl
-        retention-days: 3
-
-    - name: Upload Metrics for Regression
-      if: success()
-      uses: actions/upload-artifact@v4
-      with:
-        name: jmeter-metrics-run-${{ github.run_id }}
-        path: jmeter-tests/metrics/
-        retention-days: 30
-
-    - name: Deploy Report to GitHub Pages
-      if: success()
-      uses: peaceiris/actions-gh-pages@v4
-      with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        publish_dir: ./jmeter-tests/report
-        destination_dir: reports/run-${{ github.run_id }}
-        keep_files: true
-        commit_message: '📊 Отчёт: Запуск #${{ github.run_id }}'
-        enable_jekyll: false
-
-    - name: Save Metrics for Regression Analysis
-      if: success()
-      uses: peaceiris/actions-gh-pages@v4
-      with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        publish_dir: ./jmeter-tests/metrics
-        destination_dir: metrics
-        keep_files: true
-        commit_message: '📈 Метрики: Запуск #${{ github.run_id }}'
-        enable_jekyll: false
+      - name: Deploy to GitHub Pages
+        if: success()
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./jmeter-tests/report
+          destination_dir: reports/run-${{ github.run_id }}
+          keep_files: true
+          enable_jekyll: false
