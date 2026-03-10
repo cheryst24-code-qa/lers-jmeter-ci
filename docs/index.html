@@ -93,6 +93,7 @@
             font-weight: 600;
         }
         .badge-success { background: rgba(0,255,136,0.2); color: #00ff88; }
+        .badge-error { background: rgba(255,71,87,0.2); color: #ff4757; }
         .empty { text-align: center; padding: 40px; color: #888; }
         
         .footer {
@@ -101,6 +102,7 @@
             color: #666;
             font-size: 0.9em;
         }
+        .last-update { color: #00d9ff; }
     </style>
 </head>
 <body>
@@ -113,11 +115,11 @@
         <div class="stats">
             <div class="stat-card">
                 <div class="stat-label">Среднее время</div>
-                <div class="stat-value success">103<span style="font-size:0.5em">мс</span></div>
+                <div class="stat-value" id="avgTime" data-metric="avg">—</div>
             </div>
             <div class="stat-card">
                 <div class="stat-label">Ошибки</div>
-                <div class="stat-value success">0.00<span style="font-size:0.5em">%</span></div>
+                <div class="stat-value" id="errorRate" data-metric="error">—</div>
             </div>
             <div class="stat-card">
                 <div class="stat-label">Запусков</div>
@@ -137,18 +139,56 @@
         </div>
 
         <div class="footer">
-            <p>Обновлено: <span id="updateTime"></span></p>
+            <p>Обновлено: <span id="updateTime" class="last-update">—</span></p>
         </div>
     </div>
 
     <script>
-        // Установка времени обновления
-        document.getElementById('updateTime').textContent = new Date().toLocaleString('ru-RU');
-        
+        // Форматирование чисел
+        const fmt = {
+            ms: (v) => `${Math.round(v)}<span style="font-size:0.5em">мс</span>`,
+            pct: (v) => `${parseFloat(v).toFixed(2)}<span style="font-size:0.5em">%</span>`,
+            date: (ts) => new Date(ts).toLocaleString('ru-RU')
+        };
+
+        // Обновление метрик
+        function updateMetrics(data) {
+            if (data.avg !== undefined) {
+                const el = document.getElementById('avgTime');
+                el.innerHTML = fmt.ms(data.avg);
+                el.className = `stat-value ${data.avg < 500 ? 'success' : data.avg < 2000 ? 'warning' : 'error'}`;
+            }
+            if (data.error !== undefined) {
+                const el = document.getElementById('errorRate');
+                el.innerHTML = fmt.pct(data.error);
+                el.className = `stat-value ${data.error === 0 ? 'success' : 'error'}`;
+            }
+            if (data.timestamp) {
+                document.getElementById('updateTime').textContent = fmt.date(data.timestamp);
+            }
+        }
+
+        // Загрузка метрик из последнего отчёта
+        async function loadLatestMetrics() {
+            try {
+                // Пытаемся загрузить metrics/latest.json (создаётся в workflow)
+                const res = await fetch('metrics/latest.json?t=' + Date.now());
+                if (res.ok) {
+                    const data = await res.json();
+                    updateMetrics(data);
+                    return true;
+                }
+            } catch (e) {
+                console.log('No latest.json, using fallback');
+            }
+            return false;
+        }
+
         // Загрузка списка отчётов
-        fetch('reports/')
-            .then(r => r.text())
-            .then(html => {
+        async function loadReports() {
+            try {
+                const res = await fetch('reports/');
+                const html = await res.text();
                 const parser = new DOMParser();
                 const doc = parser.parseFromString(html, 'text/html');
                 const links = doc.querySelectorAll('a[href$="/"]');
@@ -164,13 +204,32 @@
                     }
                 });
                 
-                // Сортировка: новые сверху
                 reports.sort((a, b) => b.id - a.id);
                 
                 // Обновление статистики
                 document.getElementById('runCount').textContent = reports.length;
                 if (reports.length > 0) {
                     document.getElementById('lastRun').textContent = '#' + reports[0].id;
+                    
+                    // Если нет metrics/latest.json, парсим статистику из первого отчёта
+                    if (!await loadLatestMetrics()) {
+                        try {
+                            const statsRes = await fetch(`reports/run-${reports[0].id}/statistics.json`);
+                            if (statsRes.ok) {
+                                const stats = await statsRes.json();
+                                const total = stats.Total;
+                                if (total) {
+                                    updateMetrics({
+                                        avg: total.meanResTime,
+                                        error: total.errorPct,
+                                        timestamp: Date.now()
+                                    });
+                                }
+                            }
+                        } catch (e) {
+                            console.log('Could not parse statistics.json');
+                        }
+                    }
                 }
                 
                 // Отображение списка
@@ -190,11 +249,16 @@
                 } else {
                     list.innerHTML = '<div class="empty">🚀 Отчётов пока нет. Запустите первый тест!</div>';
                 }
-            })
-            .catch(() => {
+            } catch (e) {
                 document.getElementById('reportList').innerHTML = 
                     '<div class="empty">⚠️ Не удалось загрузить список</div>';
-            });
+            }
+        }
+
+        // Инициализация
+        document.addEventListener('DOMContentLoaded', () => {
+            loadReports();
+        });
     </script>
 </body>
 </html>

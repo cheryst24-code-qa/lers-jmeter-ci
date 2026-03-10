@@ -117,6 +117,29 @@ jobs:
           keep_files: true
           enable_jekyll: false
 
+      - name: Generate Latest Metrics JSON
+        if: success()
+        working-directory: jmeter-tests
+        run: |
+          mkdir -p ../docs/metrics
+          if [ -f report/statistics.json ]; then
+            # Читаем метрики из Total
+            AVG=$(jq -r '.Total.meanResTime // 0' report/statistics.json)
+            ERR=$(jq -r '.Total.errorPct // 0' report/statistics.json)
+            TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+            
+            # Создаём JSON для фронтенда
+            cat > ../docs/metrics/latest.json << EOF
+            {
+              "avg": $AVG,
+              "error": $ERR,
+              "timestamp": "$TIMESTAMP",
+              "runId": "${{ github.run_id }}"
+            }
+            EOF
+            echo "✅ Created metrics/latest.json"
+          fi
+
       - name: Deploy Index Page
         if: success()
         uses: peaceiris/actions-gh-pages@v4
