@@ -242,7 +242,7 @@ jobs:
         fi
 
     - name: Notify Telegram
-      if: always() && secrets.TELEGRAM_BOT_TOKEN != ''
+      if: always()
       env:
         TOTAL: ${{ env.TOTAL }}
         ERRORS: ${{ env.ERRORS }}
@@ -259,6 +259,12 @@ jobs:
         REGRESSION_ERROR: ${{ env.REGRESSION_ERROR }}
         REGRESSION_THROUGHPUT: ${{ env.REGRESSION_THROUGHPUT }}
       run: |
+        # Проверяем, задан ли токен Telegram
+        if [ -z "${{ secrets.TELEGRAM_BOT_TOKEN }}" ]; then
+          echo "Токен Telegram не задан, пропускаем уведомление"
+          exit 0
+        fi
+
         STATUS="${{ job.status }}"
         if [ "$STATUS" = "success" ]; then
           EMOJI="✅"
@@ -272,44 +278,38 @@ jobs:
         OWNER="${{ github.repository_owner }}"
         REPORT_URL="https://${OWNER}.github.io/${REPO_NAME}/reports/run-${{ github.run_id }}/index.html"
 
-        # Формирование сообщения через временный файл (избегаем проблем с YAML парсингом)
-        cat > message.txt <<'EOF'
-        ${EMOJI} *CI/CD: Нагрузочный тест ${STATUS_TEXT}!*
+        # Формируем сообщение (используем простой echo с экранированием)
+        MESSAGE="${EMOJI} *CI/CD: Нагрузочный тест ${STATUS_TEXT}!*
 
-        *Информация о запуске:*
-        Репозиторий: `${{ github.repository }}`
-        Ветка: `${{ github.ref_name }}`
-        Коммит: `${{ github.sha }}`
-        Автор: ${{ github.actor }}
+*Информация о запуске:*
+Репозиторий: \`${{ github.repository }}\`
+Ветка: \`${{ github.ref_name }}\`
+Коммит: \`${{ github.sha }}\`
+Автор: ${{ github.actor }}
 
-        *Результаты теста:*
-        • Всего запросов: `${TOTAL}`
-        • Ошибки: `${ERRORS}` (*${ERROR_RATE}%*)
-        • Среднее время: `${AVG_TIME} мс`$( [ -n "$REGRESSION_AVG" ] && echo " | ${REGRESSION_AVG}" )
-        • Мин. время: `${MIN_TIME} мс`
-        • Макс. время: `${MAX_TIME} мс`
-        • Пропускная способность: `${THROUGHPUT} req/sec`$( [ -n "$REGRESSION_THROUGHPUT" ] && echo " | ${REGRESSION_THROUGHPUT}" )
-        • Длительность: `${DURATION_SEC} сек`
+*Результаты теста:*
+• Всего запросов: \`${TOTAL}\`
+• Ошибки: \`${ERRORS}\` (*${ERROR_RATE}%*)
+• Среднее время: \`${AVG_TIME} мс\`$( [ -n \"$REGRESSION_AVG\" ] && echo \" | ${REGRESSION_AVG}\" )
+• Мин. время: \`${MIN_TIME} мс\`
+• Макс. время: \`${MAX_TIME} мс\`
+• Пропускная способность: \`${THROUGHPUT} req/sec\`$( [ -n \"$REGRESSION_THROUGHPUT\" ] && echo \" | ${REGRESSION_THROUGHPUT}\" )
+• Длительность: \`${DURATION_SEC} сек\`
 
-        *Сравнение с предыдущим запуском:*
-        • Ошибки: ${PREV_ERROR} → ${ERROR_RATE}% | ${REGRESSION_ERROR:-—}
-        • Среднее время: ${PREV_AVG} мс → ${AVG_TIME} мс | ${REGRESSION_AVG:-—}
+*Сравнение с предыдущим запуском:*
+• Ошибки: ${PREV_ERROR} → ${ERROR_RATE}% | ${REGRESSION_ERROR:-—}
+• Среднее время: ${PREV_AVG} мс → ${AVG_TIME} мс | ${REGRESSION_AVG:-—}
 
-        *Ссылки:*
-        [Отчёт](${REPORT_URL})
-        [Запуск в Actions](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
-        EOF
+*Ссылки:*
+[Отчёт](${REPORT_URL})
+[Запуск в Actions](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
 
-        # Подстановка переменных (так как heredoc с 'EOF' не подставляет)
-        eval "echo \"$(cat message.txt)\"" > message_final.txt
-
+        # Отправляем текст
         curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
           -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
-          -d text="$(cat message_final.txt)" \
+          -d text="$MESSAGE" \
           -d parse_mode="Markdown" \
           -d disable_web_page_preview="true" || echo "⚠️ Не удалось отправить текст"
-
-        rm -f message.txt message_final.txt
 
     - name: Upload HTML Report
       if: always()
