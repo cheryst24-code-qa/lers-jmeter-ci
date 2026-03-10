@@ -5,6 +5,12 @@ on:
     branches: [main, master]
   workflow_dispatch:
 
+permissions:
+  contents: write    # ✅ Нужно для деплоя на GitHub Pages
+  pages: write       # ✅ Нужно для GitHub Pages
+  id-token: write    # ✅ Для аутентификации
+
+
 jobs:
   test:
     runs-on: ubuntu-latest
