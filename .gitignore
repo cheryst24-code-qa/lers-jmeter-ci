@@ -15,3 +15,5 @@ desktop.ini    # Windows (ещё один служебный файл)
 
 jmeter-tests/LERS_Auth_Test.jmx
 jmeter-tests/LERS_Auth_Login_Success.jmx
+
+node_modules/
