@@ -116,3 +116,13 @@ jobs:
           destination_dir: reports/run-${{ github.run_id }}
           keep_files: true
           enable_jekyll: false
+
+      - name: Deploy Index Page
+        if: success()
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./docs
+          destination_dir: /
+          keep_files: true
+          enable_jekyll: false
