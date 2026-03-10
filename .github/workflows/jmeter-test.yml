@@ -13,6 +13,11 @@ jobs:
     - name: Checkout Code
       uses: actions/checkout@v4
 
+    - name: Lint YAML files
+      run: |
+        pip install yamllint
+        yamllint .github/workflows/
+
     - name: Set up JDK 11
       uses: actions/setup-java@v4
       with:
@@ -40,35 +45,45 @@ jobs:
     - name: Prepare Test Data (Secrets CSV)
       run: |
         mkdir -p jmeter-tests/test-data
-        echo "${{ secrets.SECRETS_CSV_CONTENT }}" > jmeter-tests/test-data/secrets.csv
-        if [ ! -s jmeter-tests/test-data/secrets.csv ]; then
+        # Используем echo -e для интерпретации \n как новой строки
+        echo -e "${{ secrets.SECRETS_CSV_CONTENT }}" > jmeter-tests/test-data/secrets.csv
+        # Или используем printf для надёжности
+        printf '%b\n' "${{ secrets.SECRETS_CSV_CONTENT }}" > jmeter-tests/test-data/secrets.csv
+          if [ ! -s jmeter-tests/test-data/secrets.csv ]; then
           echo "::error::Файл secrets.csv пуст!"
           exit 1
         fi
 
     - name: Run JMeter Test
+      timeout-minutes: 10  # Максимум 10 минут на тест
       working-directory: jmeter-tests
       run: |
-        echo "🚀 Starting Load Test..."
         $JMETER_HOME/bin/jmeter -n \
           -Djava.awt.headless=true \
           -Jbase_url=${{ secrets.BASE_URL }} \
-          -Jport=${{ secrets.BASE_PORT }} \
+          -Jbase_port=${{ secrets.BASE_PORT }} \
+          -Jjmeter.save.saveservice.output_format=csv \  # Явно указываем CSV
           -t LERS_Auth_Test_CI.jmx \
           -l result.jtl \
           -e -o report
 
-    # 🆕 НОВЫЙ ШАГ: Генерация статистики для вкладки Summary
+    # НОВЫЙ ШАГ: Генерация статистики для вкладки Summary
     - name: Generate Test Summary
       if: always()
       working-directory: jmeter-tests
       shell: bash
       run: |
-        echo "⏳ Анализ результатов теста..."
+        echo "Анализ результатов теста..."
         
         # Проверка существования файла
         if [ ! -f result.jtl ]; then
           echo "::error::Файл result.jtl не найден!"
+          exit 1
+        fi
+
+        # Явная проверка на 0 байт
+        if [ ! -s result.jtl ]; then
+          echo "::error::Файл result.jtl пуст!"
           exit 1
         fi
 
@@ -129,7 +144,7 @@ jobs:
         
         # Формирование Markdown отчета для вкладки Summary
         {
-          echo "## 📊 Отчет о нагрузочном тестировании"
+          echo "## Отчет о нагрузочном тестировании"
           echo ""
           echo "| Метрика | Значение |"
           echo "| :--- | :--- |"
@@ -167,3 +182,17 @@ jobs:
         name: jmeter-raw-data-run-${{ github.run_id }}
         path: jmeter-tests/result.jtl
         retention-days: 3
+
+    - name: Notify Telegram
+      if: always()
+      run: |
+        STATUS="${{ job.status }}"
+        EMOJI=$([ "$STATUS" = "success" ] && echo "✅" || echo "❌")
+        
+        curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+          -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
+          -d text="${EMOJI} *CI/CD: Нагрузочный тест ${STATUS}!*
+        Репозиторий: \`${{ github.repository }}\`
+        Коммит: \`${{ github.sha }}\`
+        Запуск: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+          -d parse_mode="Markdown"   

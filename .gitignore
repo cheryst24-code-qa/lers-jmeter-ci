@@ -6,6 +6,7 @@ jmeter-tests/jmeter.log
 
 # Secrets - не для github
 jmeter-tests/test-data/secrets.csv
+.env.local
 
 # OS files
 .DS_Store      # macOS
@@ -13,4 +14,4 @@ Thumbs.db      # Windows
 desktop.ini    # Windows (ещё один служебный файл)
 
 jmeter-tests/LERS_Auth_Test.jmx
-LERS_Auth_Login_Success.jmx
+jmeter-tests/LERS_Auth_Login_Success.jmx
