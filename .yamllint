@@ -7,4 +7,3 @@ rules:
   truthy: disable
   brackets: disable
   new-lines: disable
-  
