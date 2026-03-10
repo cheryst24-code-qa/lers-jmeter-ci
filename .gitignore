@@ -6,7 +6,6 @@ jmeter-tests/jmeter.log
 
 # Secrets - не для github
 jmeter-tests/test-data/secrets.csv
-.env.local
 
 # OS files
 .DS_Store      # macOS
